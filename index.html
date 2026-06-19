@@ -105,7 +105,8 @@
 
   .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:auto;box-shadow:var(--shadow);}
   table{width:100%;border-collapse:collapse;font-size:13px;}
-  th,td{padding:11px 14px;text-align:left;white-space:nowrap;}
+  th,td{padding:6px 12px;text-align:left;white-space:nowrap;}
+  tbody td{font-size:12.5px;}
   thead th{position:sticky;top:0;background:#10131b;color:var(--muted);font-weight:600;font-size:11.5px;
     text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;border-bottom:1px solid var(--line);z-index:1;}
   th .arrow{color:var(--accent);}
@@ -383,6 +384,7 @@ function maybeRun(){
   if(!invRaw || !ordRaw) return;
   autoDetect();
   if(!MAP.ord.sku || !MAP.stores.some(s=>s.warehouse)){
+    // detection incomplete -> open settings so the user can fix the few unknowns
     buildDrawer(); openDrawer();
     showErr("Almost there — confirm the SKU column and which location is your warehouse, then Apply.");
     return;
