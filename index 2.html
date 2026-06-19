@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Omnichannel Dispatch — Order Routing</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#181b22; --panel2:#1f232c; --line:#2a2f3a;
+    --txt:#e8eaed; --muted:#9aa3b2; --accent:#4f8cff; --accent2:#22c55e;
+    --warn:#f59e0b; --bad:#ef4444; --chip:#262b35;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:18px 22px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    background:linear-gradient(180deg,#14171d,#0f1115); }
+  header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.2px; }
+  header .tag { background:var(--chip); color:var(--accent); padding:2px 8px;
+    border-radius:999px; font-size:12px; font-weight:600; }
+  .spacer { flex:1; }
+  .updated { color:var(--muted); font-size:12px; }
+  .wrap { padding:18px 22px 60px; }
+
+  .uploads { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:14px; margin-bottom:18px; }
+  .drop { background:var(--panel); border:1.5px dashed var(--line); border-radius:12px;
+    padding:18px; text-align:center; cursor:pointer; transition:.15s; }
+  .drop:hover, .drop.over { border-color:var(--accent); background:#1b2030; }
+  .drop h3 { margin:0 0 6px; font-size:14px; }
+  .drop p { margin:0; color:var(--muted); font-size:12px; }
+  .drop .file { margin-top:8px; color:var(--accent2); font-size:12px; font-weight:600; word-break:break-all; }
+  .drop input { display:none; }
+
+  .controls { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:18px; }
+  .ctl label { display:block; color:var(--muted); font-size:11px; text-transform:uppercase;
+    letter-spacing:.6px; margin-bottom:5px; }
+  input[type="search"], select, input[type="text"], input[type="number"] {
+    background:var(--panel2); border:1px solid var(--line); color:var(--txt);
+    padding:8px 10px; border-radius:8px; font-size:14px; outline:none; }
+  input[type="search"]{ min-width:240px; }
+  button { background:var(--accent); color:#fff; border:0; padding:9px 14px;
+    border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; }
+  button.secondary { background:var(--panel2); border:1px solid var(--line); color:var(--txt); }
+  button:hover { filter:brightness(1.08); }
+  button:disabled { opacity:.5; cursor:default; }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:12px; margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card .k { color:var(--muted); font-size:12px; }
+  .card .v { font-size:24px; font-weight:700; margin-top:4px; }
+  .card.green .v { color:var(--accent2); }
+  .card.amber .v { color:var(--warn); }
+  .card.red .v { color:var(--bad); }
+
+  details.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    margin-bottom:18px; }
+  details.panel > summary { padding:13px 16px; cursor:pointer; font-weight:600; user-select:none; list-style:none; }
+  details.panel > summary::-webkit-details-marker { display:none; }
+  details.panel > summary::before { content:"▸ "; color:var(--accent); }
+  details.panel[open] > summary::before { content:"▾ "; }
+  .panelbody { padding:0 16px 16px; }
+  .maprow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:7px 0; border-top:1px solid var(--line); }
+  .maprow:first-child { border-top:0; }
+  .maprow .nm { min-width:240px; font-weight:600; }
+  .maprow .badge { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--chip); color:var(--muted); }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .field label { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; margin-bottom:4px; }
+  .field select, .field input { width:100%; }
+
+  .tablewrap { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { position:sticky; top:0; background:var(--panel2); color:var(--muted);
+    font-weight:600; cursor:pointer; user-select:none; z-index:1; }
+  th .arrow { color:var(--accent); font-size:11px; }
+  tbody tr:hover { background:#1b1f27; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; display:inline-block; }
+  .s-ho { background:rgba(34,197,94,.15); color:var(--accent2); }
+  .s-holow { background:rgba(245,158,11,.16); color:var(--warn); }
+  .s-same { background:rgba(79,140,255,.18); color:var(--accent); }
+  .s-other { background:rgba(245,158,11,.16); color:var(--warn); }
+  .s-oos { background:rgba(239,68,68,.16); color:#fca5a5; }
+  .mtag { font-size:11px; color:var(--muted); }
+  .empty { padding:44px; text-align:center; color:var(--muted); }
+  .muted { color:var(--muted); }
+  .err { background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.4);
+    color:#fca5a5; padding:12px 14px; border-radius:10px; margin-bottom:16px; white-space:pre-wrap; }
+  .hint { color:var(--muted); font-size:12px; margin:2px 0 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Omnichannel Dispatch</h1>
+  <span class="tag">Order Routing</span>
+  <div class="spacer"></div>
+  <div class="updated" id="updated">Upload both files to begin</div>
+</header>
+
+<div class="wrap">
+  <div id="errBox"></div>
+
+  <!-- UPLOADS -->
+  <div class="uploads">
+    <label class="drop" id="dropInv">
+      <h3>1 · Store Inventory sheet</h3>
+      <p>Stores, SKU, Design code, Qty per store. Click or drop .xlsx / .csv</p>
+      <div class="file" id="invFile"></div>
+      <input type="file" id="invInput" accept=".xlsx,.xls,.csv" />
+    </label>
+    <label class="drop" id="dropOrd">
+      <h3>2 · Shopify Orders export</h3>
+      <p>Order, Lineitem SKU, Shipping City, Qty. Click or drop .xlsx / .csv</p>
+      <div class="file" id="ordFile"></div>
+      <input type="file" id="ordInput" accept=".xlsx,.xls,.csv" />
+    </label>
+  </div>
+
+  <!-- COLUMN MAPPING -->
+  <details class="panel" id="mapPanel" style="display:none">
+    <summary>Column mapping &amp; settings <span class="muted" id="mapStatus"></span></summary>
+    <div class="panelbody">
+      <p class="hint">Auto-detected from your headers. Adjust only if something looks wrong — choices are remembered for next time.</p>
+
+      <h4 style="margin:6px 0">Orders sheet columns</h4>
+      <div class="grid2" id="ordMap"></div>
+
+      <h4 style="margin:18px 0 6px">Inventory sheet</h4>
+      <div class="field" style="max-width:320px; margin-bottom:12px">
+        <label>Inventory layout</label>
+        <select id="invLayout">
+          <option value="long">Long — one row per store (Store / SKU / Qty columns)</option>
+          <option value="wide">Wide — one row per SKU, a column per store</option>
+        </select>
+      </div>
+      <div class="grid2" id="invMap"></div>
+
+      <h4 style="margin:18px 0 6px">Store → City mapping</h4>
+      <p class="hint">Set each store's city and mark your online warehouse (HO). Routing uses this.</p>
+      <div id="storeMap"></div>
+
+      <div class="field" style="max-width:360px; margin-top:16px">
+        <label>Design-code fallback: derive from SKU by splitting on</label>
+        <input type="text" id="skuDelim" value="-" maxlength="3" />
+        <p class="hint">If an order SKU isn't found, the part before this character is matched against inventory design codes. Leave as "-" for SKUs like DESIGN-COLOR-SIZE.</p>
+      </div>
+
+      <div style="margin-top:16px">
+        <button id="runBtn">Run dispatch analysis</button>
+      </div>
+    </div>
+  </details>
+
+  <!-- SUMMARY -->
+  <div class="cards" id="cards" style="display:none"></div>
+
+  <!-- FILTERS -->
+  <div class="controls" id="filters" style="display:none">
+    <div class="ctl">
+      <label>Order date from</label>
+      <input type="date" id="dateFrom" />
+    </div>
+    <div class="ctl">
+      <label>to</label>
+      <input type="date" id="dateTo" />
+    </div>
+    <div class="ctl"><label>&nbsp;</label><button class="secondary" id="dateAll">All dates</button></div>
+    <div class="ctl"><label>&nbsp;</label><button class="secondary" id="dateToday">Today</button></div>
+    <div class="ctl">
+      <label>Search (order, SKU, product)</label>
+      <input type="search" id="search" placeholder="Type to filter…" />
+    </div>
+    <div class="ctl">
+      <label>Status</label>
+      <select id="statusFilter">
+        <option value="">All</option>
+        <option value="ho">Can dispatch (HO / online)</option>
+        <option value="ho_low">Dispatch from HO — low (≤5)</option>
+        <option value="same">Ship from shop — same city</option>
+        <option value="other">Ship from shop — other city</option>
+        <option value="oos">Out of stock</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>Order city</label>
+      <select id="cityFilter"><option value="">All</option></select>
+    </div>
+    <div class="ctl">
+      <label>Fulfillment</label>
+      <select id="fulFilter">
+        <option value="">All</option>
+        <option value="unfulfilled">Needs dispatch (unfulfilled / pending)</option>
+        <option value="fulfilled">Fulfilled</option>
+      </select>
+    </div>
+    <div class="spacer"></div>
+    <div class="ctl"><label>&nbsp;</label><button class="secondary" id="exportCsv">Export CSV</button></div>
+    <div class="ctl"><label>&nbsp;</label><button class="secondary" id="exportXlsx">Export Excel</button></div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="tablewrap" id="tablewrap" style="display:none">
+    <table id="tbl">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="emptyState" style="display:none">No rows match your filters.</div>
+  </div>
+</div>
+
+<script>
+/* ============================== CONFIG ============================== */
+// Known stores: keywords (most-specific first) -> city + warehouse flag.
+const STORE_REGISTRY = [
+  { name:"Lahore Warehouse (HO)",            city:"Lahore",    warehouse:true,  kw:["warehouse","head office","(ho)","ho","main inventory"] },
+  { name:"Dolmen Mall Clifton, Karachi",     city:"Karachi",   warehouse:false, kw:["clifton"] },
+  { name:"Dolmen Mall, Lahore",              city:"Lahore",    warehouse:false, kw:["dolmen"] },
+  { name:"Centaurus Mall, Islamabad",        city:"Islamabad", warehouse:false, kw:["centaurus"] },
+  { name:"GIGA Mall, Islamabad",             city:"Islamabad", warehouse:false, kw:["giga"] },
+  { name:"Gold Crest Mall Gulberg, Lahore",  city:"Lahore",    warehouse:false, kw:["gold crest","goldcrest","gulberg"] },
+  { name:"Galleria Mall (Mall of Lahore), Lahore", city:"Lahore", warehouse:false, kw:["galleria","mall of lahore"] },
+  { name:"Packages Mall, Lahore",            city:"Lahore",    warehouse:false, kw:["packages"] },
+  { name:"Realty, Karachi",                  city:"Karachi",   warehouse:false, kw:["realty"] },
+];
+const CITIES = ["Lahore","Islamabad","Karachi"];
+// Nearest-first ranking from each order city.
+const CITY_RANK = {
+  Lahore:    { Lahore:0, Islamabad:1, Karachi:2 },
+  Islamabad: { Islamabad:0, Lahore:1, Karachi:2 },
+  Karachi:   { Karachi:0, Lahore:1, Islamabad:2 },
+};
+// Common Pakistani cities / abbreviations -> nearest hub (for order delivery city normalisation).
+const CITY_ALIAS = {
+  // Islamabad hub (north)
+  islamabad:"Islamabad", isb:"Islamabad", isl:"Islamabad", rawalpindi:"Islamabad", rwp:"Islamabad",
+  taxila:"Islamabad", wah:"Islamabad", attock:"Islamabad", chakwal:"Islamabad", jhelum:"Islamabad",
+  abbottabad:"Islamabad", "abbott abad":"Islamabad", mansehra:"Islamabad", haripur:"Islamabad",
+  peshawar:"Islamabad", mardan:"Islamabad", swat:"Islamabad", mingora:"Islamabad", kohat:"Islamabad",
+  gilgit:"Islamabad", "gilgit baltistan":"Islamabad", "gilgit balistan":"Islamabad", skardu:"Islamabad",
+  muzaffarabad:"Islamabad", mirpur:"Islamabad", "azad kashmir":"Islamabad", ajk:"Islamabad", murree:"Islamabad",
+  // Lahore hub (central Punjab)
+  lahore:"Lahore", lhr:"Lahore", gujranwala:"Lahore", sialkot:"Lahore", faisalabad:"Lahore", fsd:"Lahore",
+  multan:"Lahore", sheikhupura:"Lahore", kasur:"Lahore", sahiwal:"Lahore", okara:"Lahore", gujrat:"Lahore",
+  bahawalpur:"Lahore", "rahim yar khan":"Lahore", jaranwala:"Lahore", kharian:"Lahore", "kharian garrison":"Lahore",
+  jhang:"Lahore", "dera ghazi khan":"Lahore", dgkhan:"Lahore", vehari:"Lahore", chiniot:"Lahore",
+  // Karachi hub (south)
+  karachi:"Karachi", khi:"Karachi", hyderabad:"Karachi", sukkur:"Karachi", quetta:"Karachi",
+  "mirpur khas":"Karachi", larkana:"Karachi", nawabshah:"Karachi", "mirpurkhas":"Karachi", thatta:"Karachi",
+};
+// Pakistani provinces / regions -> nearest hub (most reliable region signal after city).
+const PROVINCE_HUB = {
+  "punjab":"Lahore",
+  "sindh":"Karachi",
+  "islamabad capital territory":"Islamabad", "islamabad":"Islamabad", "federal capital":"Islamabad", "ict":"Islamabad",
+  "khyber pakhtunkhwa":"Islamabad", "khyber pakhtoonkhwa":"Islamabad", "kpk":"Islamabad", "kp":"Islamabad", "nwfp":"Islamabad",
+  "balochistan":"Karachi", "baluchistan":"Karachi",
+  "gilgit-baltistan":"Islamabad", "gilgit baltistan":"Islamabad",
+  "azad kashmir":"Islamabad", "azad jammu and kashmir":"Islamabad", "ajk":"Islamabad",
+};
+function provinceHub(p){ const l=low(p); if(!l) return ""; if(PROVINCE_HUB[l]) return PROVINCE_HUB[l];
+  for(const k in PROVINCE_HUB){ if(l.includes(k)) return PROVINCE_HUB[k]; } return ""; }
+const HO_MIN_QTY = 5; // strictly greater-than this at HO => Can dispatch online.
+const LS_KEY = "omnidispatch.map.v1";
+
+/* ============================== STATE ============================== */
+let invRaw=null, ordRaw=null;       // {headers, rows}
+let invHeaders=[], ordHeaders=[];
+let storeList=[];                   // [{key, city, warehouse}]
+let results=[];                    // computed rows
+let sortKey="order", sortDir=1;
+const saved = loadSaved();
+
+/* ============================== HELPERS ============================== */
+const norm = s => (s==null?"":String(s)).trim();
+const low  = s => norm(s).toLowerCase();
+const numv = v => { const n=parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isNaN(n)?0:n; };
+// Parse a date from Excel serial numbers OR ISO/date strings. Returns YYYY-MM-DD key (UTC-stable) or "".
+function dateKey(v){
+  v=norm(v); if(!v) return "";
+  if(/^\d+(\.\d+)?$/.test(v)){            // Excel serial day number
+    const n=Math.floor(parseFloat(v));
+    if(n>20000 && n<90000){ const d=new Date(Math.round((n-25569)*86400000));
+      return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0"); }
+  }
+  const d=new Date(v); if(isNaN(d)) return "";
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function todayKey(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function loadSaved(){ try{ return JSON.parse(localStorage.getItem(LS_KEY))||{}; }catch(e){ return {}; } }
+function persist(){ localStorage.setItem(LS_KEY, JSON.stringify(saved)); }
+function showErr(m){ document.getElementById("errBox").innerHTML = m?`<div class="err">${m}</div>`:""; }
+
+function readFile(file, cb){
+  const fr=new FileReader();
+  fr.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:"array"});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:false});
+      // first non-empty row = headers
+      let hi=0; while(hi<arr.length && arr[hi].every(c=>norm(c)==="")) hi++;
+      const headers=(arr[hi]||[]).map(norm);
+      const rows=[];
+      for(let i=hi+1;i<arr.length;i++){
+        const r=arr[i]; if(!r || r.every(c=>norm(c)==="")) continue;
+        const o={}; headers.forEach((h,j)=> o[h]= r[j]===undefined?"":r[j]); rows.push(o);
+      }
+      cb({headers, rows});
+    }catch(err){ showErr("Could not read file: "+err.message); }
+  };
+  fr.readAsArrayBuffer(file);
+}
+
+// find a header whose normalised name matches any of the candidate patterns
+function pickHeader(headers, patterns){
+  const H=headers.map(low);
+  for(const p of patterns){
+    const i=H.findIndex(h=> h===p);
+    if(i>=0) return headers[i];
+  }
+  for(const p of patterns){
+    const i=H.findIndex(h=> h.includes(p));
+    if(i>=0) return headers[i];
+  }
+  return "";
+}
+
+// keyword match: pure words match on word-boundaries (so "ho" doesn't hit "laHOre"),
+// multi-word / punctuated keywords use plain substring.
+function kwMatch(l, k){
+  k=String(k).toLowerCase();
+  if(/^[a-z0-9]+$/.test(k)) return new RegExp("\\b"+k+"\\b").test(l);
+  return l.includes(k);
+}
+// match a free-text location string to the registry
+function classifyStore(name){
+  const l=low(name);
+  for(const s of STORE_REGISTRY){
+    if(s.kw.some(k=> kwMatch(l,k))) return {city:s.city, warehouse:s.warehouse};
+  }
+  // city guess from the text itself
+  for(const c of CITIES){ if(l.includes(c.toLowerCase())) return {city:c, warehouse:false}; }
+  return {city:"Lahore", warehouse:false};
+}
+function normCity(text){
+  const l=low(text);
+  for(const c of CITIES){ if(l.includes(c.toLowerCase())) return c; }
+  for(const k in CITY_ALIAS){ if(l.includes(k)) return CITY_ALIAS[k]; }
+  return "";
+}
+
+/* ============================== UPLOAD WIRING ============================== */
+function wireDrop(dropId, inputId, fileId, kind){
+  const drop=document.getElementById(dropId), input=document.getElementById(inputId), lab=document.getElementById(fileId);
+  input.addEventListener("change",e=>{ if(e.target.files[0]) handle(e.target.files[0]); });
+  drop.addEventListener("dragover",e=>{ e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave",()=> drop.classList.remove("over"));
+  drop.addEventListener("drop",e=>{ e.preventDefault(); drop.classList.remove("over");
+    if(e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]); });
+  function handle(file){
+    lab.textContent="reading "+file.name+" …";
+    readFile(file, data=>{
+      lab.textContent="✓ "+file.name+"  ("+data.rows.length+" rows)";
+      if(kind==="inv"){ invRaw=data; invHeaders=data.headers; }
+      else { ordRaw=data; ordHeaders=data.headers; }
+      onFilesChanged();
+    });
+  }
+}
+wireDrop("dropInv","invInput","invFile","inv");
+wireDrop("dropOrd","ordInput","ordFile","ord");
+
+function onFilesChanged(){
+  if(!invRaw || !ordRaw) return;
+  buildMappingUI();
+  document.getElementById("mapPanel").style.display="";
+  document.getElementById("mapPanel").open=true;
+  document.getElementById("mapStatus").textContent="— review, then Run";
+}
+
+/* ============================== MAPPING UI ============================== */
+function selField(label, id, headers, selected){
+  const opts=['<option value="">— none —</option>']
+    .concat(headers.map(h=>`<option value="${escAttr(h)}" ${h===selected?"selected":""}>${escHtml(h)}</option>`));
+  return `<div class="field"><label>${label}</label><select id="${id}">${opts.join("")}</select></div>`;
+}
+function buildMappingUI(){
+  // --- ORDERS ---
+  const o = saved.ord||{};
+  const ordGuess = {
+    order: o.order || pickHeader(ordHeaders,["name","order","order name","order number","order id"]),
+    sku:   o.sku   || pickHeader(ordHeaders,["lineitem sku","line item sku","sku","variant sku"]),
+    product:o.product|| pickHeader(ordHeaders,["lineitem name","line item name","product","product title","item"]),
+    qty:   o.qty   || pickHeader(ordHeaders,["lineitem quantity","line item quantity","quantity","qty"]),
+    city:  o.city  || pickHeader(ordHeaders,["shipping city","ship city","city","delivery city"]),
+    design:o.design|| pickHeader(ordHeaders,["design code","design","style","style code"]),
+    ful:   o.ful   || pickHeader(ordHeaders,["lineitem fulfillment status","fulfillment status","fulfilment status"]),
+    prov:  o.prov  || pickHeader(ordHeaders,["shipping province name","shipping province","province name","province","shipping state","state"]),
+    date:  o.date  || pickHeader(ordHeaders,["created at","created","order date","date","processed at"]),
+  };
+  document.getElementById("ordMap").innerHTML =
+    selField("Order #","m_o_order",ordHeaders,ordGuess.order)+
+    selField("SKU","m_o_sku",ordHeaders,ordGuess.sku)+
+    selField("Product name","m_o_product",ordHeaders,ordGuess.product)+
+    selField("Quantity","m_o_qty",ordHeaders,ordGuess.qty)+
+    selField("Delivery city","m_o_city",ordHeaders,ordGuess.city)+
+    selField("Delivery province (city fallback)","m_o_prov",ordHeaders,ordGuess.prov)+
+    selField("Order date","m_o_date",ordHeaders,ordGuess.date)+
+    selField("Design code (optional)","m_o_design",ordHeaders,ordGuess.design)+
+    selField("Fulfillment status (optional)","m_o_ful",ordHeaders,ordGuess.ful);
+
+  // --- INVENTORY layout auto-guess ---
+  const i = saved.inv||{};
+  const storeCols = invHeaders.filter(h=> classifyStoreHeader(h));
+  const guessedLayout = i.layout || ((storeCols.length>=2) ? "wide" : "long");
+  document.getElementById("invLayout").value=guessedLayout;
+  document.getElementById("invLayout").onchange=()=>{ renderInvMap(); renderStoreMap(); };
+  renderInvMap();
+  renderStoreMap();
+
+  document.getElementById("skuDelim").value = (saved.skuDelim!=null?saved.skuDelim:"-");
+  document.getElementById("runBtn").onclick = runAnalysis;
+}
+function classifyStoreHeader(h){
+  const l=low(h);
+  if(["sku","design","style","qty","quantity","total","grand total","variant","barcode","product","name","price"].some(x=>l===x)) return false;
+  for(const s of STORE_REGISTRY){ if(s.kw.some(k=> kwMatch(l,k))) return true; }
+  for(const c of CITIES){ if(l.includes(c.toLowerCase())) return true; }
+  return false;
+}
+function renderInvMap(){
+  const layout=document.getElementById("invLayout").value;
+  const i=saved.inv||{};
+  const skuG = i.sku || pickHeader(invHeaders,["sku","variant sku","item sku"]);
+  const dsgG = i.design || pickHeader(invHeaders,["design code","design","style code","style"]);
+  let html = selField("SKU column","m_i_sku",invHeaders,skuG)+
+             selField("Design code column","m_i_design",invHeaders,dsgG);
+  if(layout==="long"){
+    const stG = i.store || pickHeader(invHeaders,["store","location","branch","shop","warehouse name"]);
+    const qtG = i.qty   || pickHeader(invHeaders,["available","quantity","qty","stock","on hand","inventory"]);
+    html += selField("Store / location column","m_i_store",invHeaders,stG)+
+            selField("Quantity column","m_i_qty",invHeaders,qtG);
+  }
+  document.getElementById("invMap").innerHTML=html;
+  if(layout==="long"){ document.getElementById("m_i_store").onchange=renderStoreMap; }
+}
+function detectStores(){
+  const layout=document.getElementById("invLayout").value;
+  let names=[];
+  if(layout==="wide"){
+    const skuCol=val("m_i_sku"), dsgCol=val("m_i_design");
+    names = invHeaders.filter(h=> h!==skuCol && h!==dsgCol && classifyStoreHeader(h));
+  } else {
+    const storeCol=val("m_i_store");
+    if(storeCol){ const set=new Set(); invRaw.rows.forEach(r=> { const v=norm(r[storeCol]); if(v) set.add(v); }); names=[...set]; }
+  }
+  return names;
+}
+function renderStoreMap(){
+  const names=detectStores();
+  const sm=saved.stores||{};
+  storeList = names.map(n=>{
+    const g=classifyStore(n);
+    return { key:n, city: sm[n]?.city || g.city, warehouse: sm[n]?.warehouse!=null? sm[n].warehouse : g.warehouse };
+  });
+  // ensure at most sensible warehouse default
+  document.getElementById("storeMap").innerHTML = storeList.map((s,idx)=>`
+    <div class="maprow">
+      <span class="nm">${escHtml(s.key)}</span>
+      <span class="badge">city</span>
+      <select data-i="${idx}" class="st-city">${CITIES.map(c=>`<option ${c===s.city?"selected":""}>${c}</option>`).join("")}</select>
+      <label style="display:flex;gap:6px;align-items:center;color:var(--muted)">
+        <input type="checkbox" data-i="${idx}" class="st-wh" ${s.warehouse?"checked":""}/> Online warehouse (HO)
+      </label>
+    </div>`).join("") || '<p class="hint">No stores detected yet — check the layout and column choices above.</p>';
+  document.querySelectorAll(".st-city").forEach(el=> el.onchange=e=>{ storeList[+e.target.dataset.i].city=e.target.value; });
+  document.querySelectorAll(".st-wh").forEach(el=> el.onchange=e=>{ storeList[+e.target.dataset.i].warehouse=e.target.checked; });
+}
+const val = id => { const el=document.getElementById(id); return el? el.value : ""; };
+
+/* ============================== ANALYSIS ============================== */
+function buildInventoryIndex(){
+  // returns { bySku: Map(sku -> {design, locs:[{store,city,wh,qty}]}), byDesign: Map(design -> [{sku,locs...}]) }
+  const layout=document.getElementById("invLayout").value;
+  const cfg={ sku:val("m_i_sku"), design:val("m_i_design"), store:val("m_i_store"), qty:val("m_i_qty") };
+  const storeMeta={}; storeList.forEach(s=> storeMeta[s.key]=s);
+  const bySku=new Map();
+  function addLoc(sku,design,storeKey,qty){
+    sku=norm(sku); if(!sku) return;
+    const meta=storeMeta[storeKey]||classifyStore(storeKey);
+    if(!bySku.has(sku)) bySku.set(sku,{sku, design:norm(design), locs:[]});
+    const rec=bySku.get(sku);
+    if(!rec.design && design) rec.design=norm(design);
+    rec.locs.push({ store:storeKey, city:meta.city, warehouse:!!meta.warehouse, qty:numv(qty) });
+  }
+  if(layout==="wide"){
+    invRaw.rows.forEach(r=>{
+      const sku=r[cfg.sku], design=r[cfg.design];
+      storeList.forEach(s=> addLoc(sku,design,s.key, r[s.key]));
+    });
+  } else {
+    invRaw.rows.forEach(r=> addLoc(r[cfg.sku], r[cfg.design], norm(r[cfg.store]), r[cfg.qty]));
+  }
+  // consolidate duplicate store rows for same sku
+  const byDesign=new Map();
+  for(const rec of bySku.values()){
+    const agg={};
+    rec.locs.forEach(l=>{ const k=l.store; if(!agg[k]) agg[k]={...l}; else agg[k].qty+=l.qty; });
+    rec.locs=Object.values(agg);
+    if(rec.design){ if(!byDesign.has(rec.design)) byDesign.set(rec.design,[]); byDesign.get(rec.design).push(rec); }
+  }
+  return {bySku, byDesign};
+}
+
+function chooseDispatch(rec, orderCity){
+  // rec.locs: [{store,city,warehouse,qty}]
+  // 1st priority is ALWAYS the warehouse (HO). >5 = safe online dispatch; 1..5 = dispatch but low.
+  const ho = rec.locs.filter(l=> l.warehouse).sort((a,b)=> b.qty-a.qty)[0];
+  const hoQty = ho? ho.qty : 0;
+  if(hoQty > HO_MIN_QTY) return { status:"ho",     source:ho.store, sourceCity:ho.city, qty:hoQty };
+  if(hoQty > 0)          return { status:"ho_low", source:ho.store, sourceCity:ho.city, qty:hoQty };
+  // HO empty -> route to nearest shop by order city (same city first, then nearest).
+  const rank = CITY_RANK[orderCity] || {Lahore:0,Islamabad:1,Karachi:2};
+  const shops = rec.locs.filter(l=> !l.warehouse && l.qty>0)
+    .sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || b.qty-a.qty );
+  if(shops.length){
+    const best=shops[0];
+    return { status: best.city===orderCity?"same":"other", source:best.store, sourceCity:best.city, qty:best.qty };
+  }
+  return { status:"oos", source:"—", sourceCity:"—", qty:0 };
+}
+
+function runAnalysis(){
+  showErr("");
+  // persist mapping
+  saved.ord={ order:val("m_o_order"), sku:val("m_o_sku"), product:val("m_o_product"),
+              qty:val("m_o_qty"), city:val("m_o_city"), design:val("m_o_design"),
+              ful:val("m_o_ful"), prov:val("m_o_prov"), date:val("m_o_date") };
+  saved.inv={ layout:document.getElementById("invLayout").value, sku:val("m_i_sku"),
+              design:val("m_i_design"), store:val("m_i_store"), qty:val("m_i_qty") };
+  saved.stores={}; storeList.forEach(s=> saved.stores[s.key]={city:s.city, warehouse:s.warehouse});
+  saved.skuDelim=document.getElementById("skuDelim").value; persist();
+
+  if(!saved.ord.sku){ showErr("Pick the SKU column in the Orders sheet."); return; }
+  if(!storeList.some(s=>s.warehouse)){ showErr("Mark at least one store as the Online warehouse (HO) in Store → City mapping."); return; }
+
+  const idx=buildInventoryIndex();
+  const delim=saved.skuDelim||"-";
+  const oc=saved.ord;
+  // Shopify holds ONE shipping address per order; on multi-item orders the address fields are
+  // only on the first line and blank on the rest. So we forward-fill order-level fields by order #
+  // and apply the same destination to every line item of that order.
+  // Auto-detect extra shipping address columns to recover city when City/Province are blank.
+  const addrCols = ordHeaders.filter(h=> /^shipping (address|street|company|zip)/i.test(low(h)));
+  const cityByOrder={}, fulByOrder={}, provByOrder={}, addrByOrder={};
+  ordRaw.rows.forEach(r=>{
+    const nm=norm(r[oc.order]); if(!nm) return;
+    const c=oc.city? norm(r[oc.city]) : "";  if(c && !cityByOrder[nm]) cityByOrder[nm]=c;
+    const f=oc.ful?  norm(r[oc.ful])  : "";  if(f && !fulByOrder[nm])  fulByOrder[nm]=f;
+    const p=oc.prov? norm(r[oc.prov]) : "";  if(p && !provByOrder[nm]) provByOrder[nm]=p;
+    const a=addrCols.map(h=>norm(r[h])).filter(Boolean).join(" ");
+    if(a && !addrByOrder[nm]) addrByOrder[nm]=a;
+  });
+  results = ordRaw.rows.map(r=>{
+    const sku=norm(r[oc.sku]);
+    const nm=norm(r[oc.order]);
+    const rawCity = (oc.city? norm(r[oc.city]) : "") || cityByOrder[nm] || "";
+    const prov    = (oc.prov? norm(r[oc.prov]) : "") || provByOrder[nm] || "";
+    const addr    = addrByOrder[nm] || "";
+    const ful = (oc.ful? norm(r[oc.ful]) : "") || fulByOrder[nm] || "";
+    const odate = oc.date? dateKey(r[oc.date]) : "";
+    // City first, then province -> hub, then scan the address text for a known city.
+    const orderCity = normCity(rawCity) || provinceHub(prov) || normCity(addr) || "";
+    let rec = sku? idx.bySku.get(sku): null;
+    let matchType = rec? "SKU" : "";
+    let design = oc.design? norm(r[oc.design]) : "";
+    // design-code fallback (SKU not found exactly)
+    if(!rec){
+      let dc = "";
+      // 1) explicit design code on the order row
+      if(design && idx.byDesign.has(design)) dc=design;
+      // 2) match an inventory design code that is a prefix/substring of the order SKU (longest wins)
+      if(!dc && sku){
+        const s=sku.toLowerCase(); let bestLen=0;
+        for(const code of idx.byDesign.keys()){
+          const c=code.toLowerCase();
+          if(c && (s.startsWith(c) || s.includes(c)) && code.length>bestLen){ dc=code; bestLen=code.length; }
+        }
+      }
+      // 3) last resort: token before the delimiter
+      if(!dc && sku){ const p=sku.split(delim)[0]; if(p && idx.byDesign.has(p)) dc=p; }
+      if(dc && idx.byDesign.has(dc)){
+        const cands=idx.byDesign.get(dc);
+        const merged={ sku:sku||cands[0].sku, design:dc, locs:[] };
+        cands.forEach(c=> merged.locs.push(...c.locs));
+        rec=merged; matchType="Design code"; design=dc;
+      }
+    } else if(!design){ design=rec.design; }
+
+    const d = rec? chooseDispatch(rec, orderCity) : {status:"oos",source:"—",sourceCity:"—",qty:0};
+    const allLocs = rec? rec.locs.filter(l=>l.qty>0).sort((a,b)=>b.qty-a.qty)
+                         .map(l=>`${l.store}: ${l.qty}`).join("  •  ") : "Not found in inventory";
+    const hoLoc = rec? rec.locs.find(l=>l.warehouse) : null;
+    return {
+      order:nm,
+      date: odate,
+      city: orderCity || rawCity || "—",
+      rawCity: rawCity,
+      sku, design,
+      product: norm(r[oc.product]),
+      qtyOrdered: oc.qty? numv(r[oc.qty]):"",
+      ful: ful || "—",
+      status:d.status, statusLabel:statusLabel(d.status),
+      source:d.source, sourceCity:d.sourceCity,
+      ho: hoLoc? hoLoc.qty : (rec?0:"—"),
+      match:matchType,
+      where:allLocs,
+    };
+  });
+  render();
+}
+function statusLabel(s){
+  return {ho:"Can Dispatch (HO / Online)", ho_low:"Dispatch from HO — Low (≤5)",
+          same:"Ship from Shop — Same City", other:"Ship from Shop — Other City",
+          oos:"Out of Stock — All Locations"}[s]||s;
+}
+function statusClass(s){ return {ho:"s-ho",ho_low:"s-holow",same:"s-same",other:"s-other",oos:"s-oos"}[s]||""; }
+
+/* ============================== RENDER ============================== */
+const COLS=[
+  {k:"order",t:"Order #"},{k:"date",t:"Date"},{k:"city",t:"Delivery City"},{k:"sku",t:"SKU"},
+  {k:"design",t:"Design Code"},{k:"product",t:"Product"},{k:"qtyOrdered",t:"Qty",num:true},
+  {k:"ful",t:"Fulfillment"},
+  {k:"statusLabel",t:"Status"},{k:"source",t:"Dispatch From"},{k:"sourceCity",t:"From City"},
+  {k:"ho",t:"HO Qty",num:true},{k:"match",t:"Matched By"},{k:"where",t:"Stock Locations"},
+];
+function cellHtml(r,col){
+  if(col.k==="statusLabel") return `<td><span class="pill ${statusClass(r.status)}">${escHtml(r.statusLabel)}</span></td>`;
+  if(col.k==="where")  return `<td class="muted">${escHtml(r.where)}</td>`;
+  if(col.k==="match")  return `<td><span class="mtag">${escHtml(r.match||"—")}</span></td>`;
+  if(col.num)          return `<td class="num">${r[col.k]}</td>`;
+  return `<td>${escHtml(r[col.k])}</td>`;
+}
+function render(){
+  document.getElementById("cards").style.display="";
+  document.getElementById("filters").style.display="";
+  document.getElementById("tablewrap").style.display="";
+  document.getElementById("mapPanel").open=false;
+  document.getElementById("updated").textContent="Analysed "+results.length+" order lines · "+new Date().toLocaleString();
+
+  // city filter options
+  const cf=document.getElementById("cityFilter"); const cur=cf.value;
+  const cities=[...new Set(results.map(r=>r.city))].filter(c=>c&&c!=="—").sort();
+  cf.innerHTML='<option value="">All</option>'+cities.map(c=>`<option ${c===cur?"selected":""}>${escHtml(c)}</option>`).join("");
+
+  // cards
+  const view=applyFilters();
+  const tot=view.length, units=view.reduce((a,r)=>a+(+r.qtyOrdered||0),0);
+  const c=k=>view.filter(r=>r.status===k).length;
+  const unful=view.filter(r=>low(r.ful)!=="fulfilled" && r.ful!=="—").length;
+  document.getElementById("cards").innerHTML=`
+    <div class="card"><div class="k">Order Lines</div><div class="v">${tot}</div></div>
+    <div class="card"><div class="k">Units Ordered</div><div class="v">${units}</div></div>
+    <div class="card amber"><div class="k">Unfulfilled</div><div class="v">${unful}</div></div>
+    <div class="card green"><div class="k">Can Dispatch (HO)</div><div class="v">${c("ho")}</div></div>
+    <div class="card amber"><div class="k">HO Low (≤5)</div><div class="v">${c("ho_low")}</div></div>
+    <div class="card"><div class="k">Ship — Same City</div><div class="v">${c("same")}</div></div>
+    <div class="card amber"><div class="k">Ship — Other City</div><div class="v">${c("other")}</div></div>
+    <div class="card red"><div class="k">Out of Stock</div><div class="v">${c("oos")}</div></div>`;
+
+  // header
+  document.getElementById("thead").innerHTML=COLS.map(col=>{
+    const ar = sortKey===col.k? `<span class="arrow">${sortDir>0?"▲":"▼"}</span>`:"";
+    return `<th data-k="${col.k}">${col.t} ${ar}</th>`;
+  }).join("");
+  document.querySelectorAll("#thead th").forEach(th=> th.onclick=()=>{
+    const k=th.dataset.k; if(sortKey===k) sortDir*=-1; else {sortKey=k; sortDir=1;} render();
+  });
+
+  // filter + sort
+  let rows=applyFilters();
+  rows.sort((a,b)=>{
+    let x=a[sortKey], y=b[sortKey];
+    if(COLS.find(c=>c.k===sortKey)?.num){ x=+x||0; y=+y||0; return (x-y)*sortDir; }
+    return String(x).localeCompare(String(y))*sortDir;
+  });
+
+  const tb=document.getElementById("tbody");
+  tb.innerHTML=rows.map(r=>`<tr>${COLS.map(col=>cellHtml(r,col)).join("")}</tr>`).join("");
+  document.getElementById("emptyState").style.display=rows.length?"none":"block";
+  window._view=rows;
+}
+function applyFilters(){
+  const q=low(document.getElementById("search").value);
+  const sf=document.getElementById("statusFilter").value;
+  const cityF=document.getElementById("cityFilter").value;
+  const fulF=document.getElementById("fulFilter").value;
+  const from=document.getElementById("dateFrom").value;
+  const to=document.getElementById("dateTo").value;
+  return results.filter(r=>{
+    if(from && (!r.date || r.date<from)) return false;
+    if(to   && (!r.date || r.date>to))   return false;
+    if(sf && r.status!==sf) return false;
+    if(cityF && r.city!==cityF) return false;
+    if(fulF){ const f=low(r.ful);
+      if(fulF==="fulfilled" && f!=="fulfilled") return false;
+      if(fulF==="unfulfilled" && f==="fulfilled") return false; }
+    if(q){ const blob=low([r.order,r.sku,r.design,r.product,r.source,r.where].join(" ")); if(!blob.includes(q)) return false; }
+    return true;
+  });
+}
+["search","statusFilter","cityFilter","fulFilter","dateFrom","dateTo"].forEach(id=> document.getElementById(id).addEventListener("input",render));
+document.getElementById("dateAll").onclick=()=>{ document.getElementById("dateFrom").value=""; document.getElementById("dateTo").value=""; render(); };
+document.getElementById("dateToday").onclick=()=>{ const t=todayKey(); document.getElementById("dateFrom").value=t; document.getElementById("dateTo").value=t; render(); };
+
+/* ============================== EXPORT ============================== */
+function exportData(type){
+  const rows=window._view||results;
+  const head=COLS.map(c=>c.t);
+  const data=rows.map(r=>COLS.map(c=> c.k==="statusLabel"? r.statusLabel : r[c.k]));
+  const aoa=[head,...data];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  if(type==="csv"){
+    const csv=XLSX.utils.sheet_to_csv(ws);
+    dl(new Blob([csv],{type:"text/csv"}), "dispatch_"+stamp()+".csv");
+  } else {
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Dispatch");
+    XLSX.writeFile(wb,"dispatch_"+stamp()+".xlsx");
+  }
+}
+function stamp(){ const d=new Date(); return d.toISOString().slice(0,10)+"_"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0"); }
+function dl(blob,name){ const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href); }
+document.getElementById("exportCsv").onclick=()=>exportData("csv");
+document.getElementById("exportXlsx").onclick=()=>exportData("xlsx");
+
+/* ============================== UTIL ============================== */
+function escHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function escAttr(s){ return escHtml(s); }
+</script>
+</body>
+</html>
