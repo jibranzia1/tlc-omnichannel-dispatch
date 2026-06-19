@@ -121,7 +121,8 @@
   .s-other{background:rgba(245,165,36,.15);color:#f7c267;}
   .s-oos{background:rgba(240,68,56,.15);color:#ff9b92;}
   .mtag{font-size:11px;color:var(--faint);}
-  .where{color:var(--muted);font-size:12px;max-width:340px;white-space:normal;}
+  .where{color:var(--muted);font-size:12px;}
+  .wcell{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .empty{padding:50px;text-align:center;color:var(--muted);}
 
   /* ---------- DRAWER ---------- */
@@ -508,7 +509,7 @@ const COLS=[
 ];
 function cellHtml(r,col){
   if(col.k==="statusLabel") return `<td><span class="pill ${statusClass(r.status)}">${escHtml(r.statusLabel)}</span></td>`;
-  if(col.k==="where") return `<td class="where">${escHtml(r.where)}</td>`;
+  if(col.k==="where") return `<td class="where"><div class="wcell" title="${escHtml(r.where)}">${escHtml(r.where)}</div></td>`;
   if(col.k==="match") return `<td><span class="mtag">${escHtml(r.match||"—")}</span></td>`;
   if(col.num) return `<td class="num">${r[col.k]}</td>`;
   return `<td>${escHtml(r[col.k])}</td>`;
