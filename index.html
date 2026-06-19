@@ -518,12 +518,12 @@ function buildInventoryIndex(){
 
 function chooseDispatch(rec, orderCity){
   // rec.locs: [{store,city,warehouse,qty}]
-  // 1st priority is ALWAYS the warehouse (HO). >5 = safe online dispatch; 1..5 = dispatch but low.
   const ho = rec.locs.filter(l=> l.warehouse).sort((a,b)=> b.qty-a.qty)[0];
   const hoQty = ho? ho.qty : 0;
-  if(hoQty > HO_MIN_QTY) return { status:"ho",     source:ho.store, sourceCity:ho.city, qty:hoQty };
-  if(hoQty > 0)          return { status:"ho_low", source:ho.store, sourceCity:ho.city, qty:hoQty };
-  // HO empty -> route to nearest shop by order city (same city first, then nearest).
+  // Warehouse is the online source ONLY when it holds a healthy buffer (> 5).
+  if(hoQty > HO_MIN_QTY) return { status:"ho", source:ho.store, sourceCity:ho.city, qty:hoQty };
+  // HO is 0..5 (or empty) -> route to shops: order's city first (nearest city next),
+  // and within a city pick the store with the HIGHEST stock.
   const rank = CITY_RANK[orderCity] || {Lahore:0,Islamabad:1,Karachi:2};
   const shops = rec.locs.filter(l=> !l.warehouse && l.qty>0)
     .sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || b.qty-a.qty );
@@ -531,6 +531,8 @@ function chooseDispatch(rec, orderCity){
     const best=shops[0];
     return { status: best.city===orderCity?"same":"other", source:best.store, sourceCity:best.city, qty:best.qty };
   }
+  // Last resort: HO has 1..5 and no shop has any stock — still shippable from HO.
+  if(hoQty > 0) return { status:"ho_low", source:ho.store, sourceCity:ho.city, qty:hoQty };
   return { status:"oos", source:"—", sourceCity:"—", qty:0 };
 }
 
@@ -624,7 +626,7 @@ function runAnalysis(){
   render();
 }
 function statusLabel(s){
-  return {ho:"Can Dispatch (HO / Online)", ho_low:"Dispatch from HO — Low (≤5)",
+  return {ho:"Can Dispatch (HO / Online)", ho_low:"Dispatch from HO — Low (no shop stock)",
           same:"Ship from Shop — Same City", other:"Ship from Shop — Other City",
           oos:"Out of Stock — All Locations"}[s]||s;
 }
