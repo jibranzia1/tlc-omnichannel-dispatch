@@ -124,6 +124,23 @@
   .where{color:var(--muted);font-size:12px;}
   .wcell{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .empty{padding:50px;text-align:center;color:var(--muted);}
+  tbody tr{cursor:pointer;}
+  .modal{position:fixed;z-index:60;top:50%;left:50%;transform:translate(-50%,-50%);width:580px;max-width:94vw;
+    max-height:86vh;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 30px 80px rgba(0,0,0,.55);}
+  .modal .mh{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px;}
+  .modal .mh h3{margin:0 0 3px;font-size:16px;line-height:1.3;}
+  .modal .mh .sub{color:var(--faint);font-size:12.5px;}
+  .modal .mb{padding:18px 22px;}
+  .modal .why{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+    font-size:13.5px;line-height:1.6;margin-bottom:16px;}
+  .modal .why b{color:var(--txt);}
+  .modal table.st{width:100%;border-collapse:collapse;font-size:13px;}
+  .modal table.st th,.modal table.st td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;}
+  .modal table.st th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
+  .modal table.st tr.pick td{color:var(--accent2);font-weight:700;}
+  .modal .xclose{margin-left:auto;background:var(--panel2);border:1px solid var(--line);width:32px;height:32px;
+    border-radius:9px;color:var(--muted);font-size:15px;flex:none;}
 
   /* ---------- DRAWER ---------- */
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);z-index:40;display:none;}
@@ -266,6 +283,9 @@
     <button class="btn primary" id="drawerApply">Apply &amp; recalculate</button>
   </div>
 </aside>
+
+<div class="overlay" id="overlay2"></div>
+<div class="modal" id="rowModal" style="display:none"></div>
 
 <script>
 /* ============================== CONFIG ============================== */
@@ -449,18 +469,23 @@ function buildInventoryIndex(){
 }
 function chooseDispatch(rec, orderCity){
   const T = MAP.hoMin;                       // a location must EXCEED this to be a valid source
+  const oc = orderCity || "the order's city";
   const ho = rec.locs.filter(l=>l.warehouse).sort((a,b)=>b.qty-a.qty)[0];
   const hoQty = ho? ho.qty : 0;
   // 1) Warehouse online — only when it exceeds the threshold.
-  if(hoQty > T) return { status:"ho", source:ho.store, sourceCity:ho.city, qty:hoQty };
+  if(hoQty > T) return { status:"ho", source:ho.store, sourceCity:ho.city, qty:hoQty,
+    reason:`The warehouse (${ho.store}) holds ${hoQty} units — above the ${T}-unit threshold — so this order ships online from the warehouse.` };
   // 2) Shops that ALSO exceed the threshold — nearest city first, then highest stock.
   const rank = CITY_RANK[orderCity] || {Lahore:0,Islamabad:1,Karachi:2};
   const shops = rec.locs.filter(l=>!l.warehouse && l.qty>T).sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || b.qty-a.qty);
-  if(shops.length){ const b=shops[0]; return { status: b.city===orderCity?"same":"other", source:b.store, sourceCity:b.city, qty:b.qty }; }
+  if(shops.length){ const b=shops[0]; const same=b.city===orderCity;
+    return { status: same?"same":"other", source:b.store, sourceCity:b.city, qty:b.qty,
+      reason:`The warehouse has only ${hoQty} (not above ${T}). ${same? `A store in ${oc} has enough stock — ` : `No store in ${oc} has more than ${T}, so the nearest one with stock is `}${b.store} with ${b.qty} units. Dispatch from there.` }; }
   // 3) Nothing clears the threshold — surface the best sub-threshold location to verify manually.
   const low = rec.locs.filter(l=>l.qty>0).sort((a,b)=> (b.qty-a.qty) || ((b.warehouse?1:0)-(a.warehouse?1:0)))[0];
-  if(low) return { status:"low", source:low.store, sourceCity:low.city, qty:low.qty };
-  return { status:"oos", source:"—", sourceCity:"—", qty:0 };
+  if(low) return { status:"low", source:low.store, sourceCity:low.city, qty:low.qty,
+    reason:`No location holds more than ${T} units. The most stock is at ${low.store} (${low.qty}) — verify availability before dispatching.` };
+  return { status:"oos", source:"—", sourceCity:"—", qty:0, reason:`No location has any stock for this SKU.` };
 }
 function runAnalysis(){
   showErr(""); persist();
@@ -488,17 +513,31 @@ function runAnalysis(){
       if(dc&&idx.byDesign.has(dc)){ const cands=idx.byDesign.get(dc); const merged={sku:sku||cands[0].sku,design:dc,locs:[]};
         cands.forEach(c=>merged.locs.push(...c.locs)); rec=merged; matchType="Design code"; design=dc; } }
     else if(!design){ design=rec.design; }
-    const d=rec?chooseDispatch(rec,orderCity):{status:"oos",source:"—",sourceCity:"—",qty:0};
-    const where=rec?rec.locs.filter(l=>l.qty>0).sort((a,b)=>b.qty-a.qty).map(l=>`${l.store}: ${l.qty}`).join("  ·  "):"Not in inventory";
+    const d=rec?chooseDispatch(rec,orderCity):{status:"oos",source:"—",sourceCity:"—",qty:0,reason:"This SKU was not found in the inventory sheet."};
+    const locsList=rec?rec.locs.filter(l=>l.qty>0).sort((a,b)=>b.qty-a.qty):[];
+    const where=locsList.length?locsList.map(l=>`${shortStore(l.store)} ${l.qty}`).join(" · "):(rec?"No stock anywhere":"Not in inventory");
     const hoLoc=rec?rec.locs.find(l=>l.warehouse):null;
     return { order:nm, date:odate, city:orderCity||rawCity||"—", sku, design, product:norm(r[oc.product]),
       qtyOrdered:oc.qty?numv(r[oc.qty]):"", ful:ful||"—", status:d.status, statusLabel:statusLabel(d.status),
-      source:d.source, sourceCity:d.sourceCity, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType, where:where }; });
+      source:d.source, sourceCity:d.sourceCity, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType, where:where,
+      reason:d.reason, locsList:locsList }; });
   render();
 }
 function statusLabel(s){ return {ho:"Warehouse (Online)", low:"Low Stock — Verify",
   same:"Shop — Same City", other:"Shop — Other City", oos:"Out of Stock"}[s]||s; }
 function statusClass(s){ return {ho:"s-ho",low:"s-holow",same:"s-same",other:"s-other",oos:"s-oos"}[s]||""; }
+function shortStore(s){ const l=low(s);
+  if(/warehouse|\(ho\)|head office/.test(l)) return "HO";
+  if(l.includes("clifton")) return "Clifton KHI";
+  if(l.includes("realty")) return "Realty KHI";
+  if(l.includes("dolmen")) return "Dolmen LHR";
+  if(l.includes("centaurus")) return "Centaurus ISB";
+  if(l.includes("giga")) return "GIGA ISB";
+  if(l.includes("gold crest")||l.includes("goldcrest")) return "Gold Crest LHR";
+  if(l.includes("gulberg")||l.includes("galleria")) return "Galleria LHR";
+  if(l.includes("mall of lahore")) return "Mall of LHR";
+  if(l.includes("packages")) return "Packages LHR";
+  return s; }
 
 /* ============================== RENDER ============================== */
 const COLS=[
@@ -554,10 +593,29 @@ function render(){
   rows.sort((a,b)=>{ let x=a[sortKey],y=b[sortKey];
     if(COLS.find(c=>c.k===sortKey)?.num){ x=+x||0;y=+y||0;return (x-y)*sortDir; }
     return String(x).localeCompare(String(y))*sortDir; });
-  document.getElementById("tbody").innerHTML=rows.map(r=>`<tr>${COLS.map(col=>cellHtml(r,col)).join("")}</tr>`).join("");
-  document.getElementById("emptyState").style.display=rows.length?"none":"block";
   window._view=rows;
+  document.getElementById("tbody").innerHTML=rows.map((r,i)=>`<tr data-i="${i}">${COLS.map(col=>cellHtml(r,col)).join("")}</tr>`).join("");
+  document.querySelectorAll("#tbody tr").forEach(tr=> tr.onclick=()=> openRow(window._view[+tr.dataset.i]));
+  document.getElementById("emptyState").style.display=rows.length?"none":"block";
 }
+function openRow(r){ if(!r) return;
+  const list = (r.locsList&&r.locsList.length)
+    ? `<table class="st"><tr><th>Location</th><th>City</th><th style="text-align:right">Qty</th></tr>`+
+      r.locsList.map(l=>`<tr class="${l.store===r.source?'pick':''}"><td>${escHtml(l.store)}${l.store===r.source?' ◄ dispatch here':''}</td><td>${escHtml(l.city)}</td><td style="text-align:right">${l.qty}</td></tr>`).join("")+`</table>`
+    : `<p class="faint">No location currently holds stock for this SKU.</p>`;
+  document.getElementById("rowModal").innerHTML=`
+    <div class="mh"><div><h3>${escHtml(r.product||r.sku)}</h3>
+      <div class="sub">Order ${escHtml(r.order)} &middot; ${escHtml(r.city)} &middot; SKU ${escHtml(r.sku)}</div></div>
+      <button class="xclose" id="modalClose">✕</button></div>
+    <div class="mb">
+      <div class="why"><b>${escHtml(r.statusLabel)}.</b> ${escHtml(r.reason||"")}</div>
+      ${list}
+    </div>`;
+  document.getElementById("overlay2").style.display="block";
+  document.getElementById("rowModal").style.display="block";
+  document.getElementById("modalClose").onclick=closeModal;
+}
+function closeModal(){ document.getElementById("overlay2").style.display="none"; document.getElementById("rowModal").style.display="none"; }
 let fulVal="";
 function setSeg(v){ fulVal=v; document.querySelectorAll("#fulSeg button").forEach(b=> b.classList.toggle("on", b.dataset.v===v)); render(); }
 function applyFilters(){
@@ -632,6 +690,7 @@ document.getElementById("btnCols").onclick=()=>{ buildDrawer(); openDrawer(); };
 document.getElementById("drawerClose").onclick=closeDrawer;
 document.getElementById("drawerCancel").onclick=closeDrawer;
 document.getElementById("overlay").onclick=closeDrawer;
+document.getElementById("overlay2").onclick=closeModal;
 document.getElementById("drawerApply").onclick=()=>{
   const v=id=>{ const el=document.getElementById(id); return el?el.value:""; };
   MAP.ord={ order:v("d_order"),sku:v("d_sku"),product:v("d_product"),qty:v("d_qty"),city:v("d_city"),
