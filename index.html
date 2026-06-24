@@ -84,6 +84,7 @@
   .card.amber .v{color:var(--warn);} .card.amber .dot{background:var(--warn);}
   .card.red .v{color:var(--bad);} .card.red .dot{background:var(--bad);}
   .card.info .v{color:var(--info);} .card.info .dot{background:var(--info);}
+  .card.purple .v{color:#bca6ff;} .card.purple .dot{background:#bca6ff;}
 
   .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);
     border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:16px;}
@@ -120,6 +121,7 @@
   .s-same{background:rgba(79,140,255,.16);color:#86b0ff;}
   .s-other{background:rgba(245,165,36,.15);color:#f7c267;}
   .s-oos{background:rgba(240,68,56,.15);color:#ff9b92;}
+  .s-city{background:rgba(139,109,255,.16);color:#bca6ff;}
   .mtag{font-size:11px;color:var(--faint);}
   .where{color:var(--muted);font-size:12px;}
   .wcell{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -246,7 +248,8 @@
           <option value="">All</option>
           <option value="ho">Warehouse (online)</option>
           <option value="hub">City hub</option>
-          <option value="next">Next best</option>
+          <option value="city">In-city store</option>
+          <option value="other">Other city (transfer)</option>
           <option value="low">Low stock — verify</option>
           <option value="oos">Out of stock</option>
         </select>
@@ -482,13 +485,21 @@ function chooseDispatch(rec, orderCity){
   const hubLoc = hubKw ? rec.locs.find(l=> !l.warehouse && kwMatch(low(l.store), hubKw)) : null;
   if(hubLoc && hubLoc.qty > T) return { status:"hub", source:hubLoc.store, sourceCity:hubLoc.city, qty:hubLoc.qty,
     reason:`Warehouse is short (${hoQty} ≤ ${T}). ${oc}'s dispatch hub — ${hubLoc.store} — has ${hubLoc.qty} units, so dispatch from the hub.` };
-  // 3) Neither warehouse nor the city hub: FLAG the order and give the next-best store above threshold.
+  // 3) PRIORITY 3 — any OTHER store in the same city as the order (stay local).
+  const inCity = rec.locs.filter(l=>!l.warehouse && l.city===orderCity && l.qty>T).sort((a,b)=> b.qty-a.qty);
+  if(inCity.length){ const b=inCity[0];
+    return { status:"city", source:b.store, sourceCity:b.city, qty:b.qty,
+      reason:`The warehouse and ${oc}'s hub are short, but ${b.store} — also in ${oc} — has ${b.qty} units, so dispatch from there.` }; }
+  // 4) PRIORITY 4 — not available in the order's city: pull from the nearest other city,
+  //    and within that city prefer ITS designated hub (Centaurus / Galleria / Realty).
   const rank = CITY_RANK[orderCity] || {Lahore:0,Islamabad:1,Karachi:2};
-  const shops = rec.locs.filter(l=>!l.warehouse && l.qty>T).sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || b.qty-a.qty);
-  if(shops.length){ const b=shops[0]; const hubName = hubLoc? hubLoc.store : (hubKw? "the city hub" : "a city hub");
-    return { status:"next", source:b.store, sourceCity:b.city, qty:b.qty,
-      reason:`Neither the warehouse nor ${oc}'s hub (${hubName}) has more than ${T} units. Next-best location is ${b.store} with ${b.qty} units — dispatch from there and flag this order.` }; }
-  // 4) Nothing clears the threshold — surface the best sub-threshold location to verify manually.
+  const isHub = l => { const kw=CITY_HUB[l.city]; return kw ? kwMatch(low(l.store), kw) : false; };
+  const otherCity = rec.locs.filter(l=>!l.warehouse && l.city!==orderCity && l.qty>T)
+    .sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || (isHub(a)?0:1)-(isHub(b)?0:1) || b.qty-a.qty);
+  if(otherCity.length){ const b=otherCity[0]; const hubNote = isHub(b)? ` (${b.city}'s hub)` : "";
+    return { status:"other", source:b.store, sourceCity:b.city, qty:b.qty,
+      reason:`Not available anywhere in ${oc}. Nearest stock is ${b.store}${hubNote} in ${b.city} (${b.qty} units) — transfer/dispatch from ${b.city} and flag this order.` }; }
+  // 5) Nothing clears the threshold — surface the best sub-threshold location to verify manually.
   const lowL = rec.locs.filter(l=>l.qty>0).sort((a,b)=> (b.qty-a.qty) || ((b.warehouse?1:0)-(a.warehouse?1:0)))[0];
   if(lowL) return { status:"low", source:lowL.store, sourceCity:lowL.city, qty:lowL.qty,
     reason:`No location holds more than ${T} units. The most stock is at ${lowL.store} (${lowL.qty}) — verify availability before dispatching.` };
@@ -530,9 +541,9 @@ function runAnalysis(){
       reason:d.reason, locsList:locsList }; });
   render();
 }
-function statusLabel(s){ return {ho:"Warehouse (Online)", hub:"City Hub", next:"Next Best (Flag)",
-  low:"Low Stock — Verify", oos:"Out of Stock"}[s]||s; }
-function statusClass(s){ return {ho:"s-ho",hub:"s-same",next:"s-other",low:"s-holow",oos:"s-oos"}[s]||""; }
+function statusLabel(s){ return {ho:"Warehouse (Online)", hub:"City Hub", city:"In-City Store",
+  other:"Other City (Transfer)", low:"Low Stock — Verify", oos:"Out of Stock"}[s]||s; }
+function statusClass(s){ return {ho:"s-ho",hub:"s-same",city:"s-city",other:"s-other",low:"s-holow",oos:"s-oos"}[s]||""; }
 function shortStore(s){ const l=low(s);
   if(/warehouse|\(ho\)|head office/.test(l)) return "HO";
   if(l.includes("clifton")) return "Clifton KHI";
@@ -579,7 +590,8 @@ function render(){
     card("amber","__unful","Unfulfilled",unful)+
     card("green","ho","Warehouse",c("ho"))+
     card("info","hub","City Hub",c("hub"))+
-    card("amber","next","Next Best",c("next"))+
+    card("purple","city","In-City",c("city"))+
+    card("amber","other","Other City",c("other"))+
     card("amber","low","Low Stock",c("low"))+
     card("red","oos","Out of Stock",c("oos"));
   document.querySelectorAll(".card").forEach(el=> el.onclick=()=>{
