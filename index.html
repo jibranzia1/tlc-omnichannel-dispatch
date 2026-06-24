@@ -85,6 +85,7 @@
   .card.red .v{color:var(--bad);} .card.red .dot{background:var(--bad);}
   .card.info .v{color:var(--info);} .card.info .dot{background:var(--info);}
   .card.purple .v{color:#bca6ff;} .card.purple .dot{background:#bca6ff;}
+  .card.cust .v{color:#ffb27a;} .card.cust .dot{background:#ffb27a;}
 
   .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);
     border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:16px;}
@@ -122,6 +123,7 @@
   .s-other{background:rgba(245,165,36,.15);color:#f7c267;}
   .s-oos{background:rgba(240,68,56,.15);color:#ff9b92;}
   .s-city{background:rgba(139,109,255,.16);color:#bca6ff;}
+  .s-custom{background:rgba(255,157,92,.16);color:#ffb27a;}
   .mtag{font-size:11px;color:var(--faint);}
   .where{color:var(--muted);font-size:12px;}
   .wcell{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -252,6 +254,7 @@
           <option value="other">Other city (transfer)</option>
           <option value="low">Low stock — verify</option>
           <option value="oos">Out of stock</option>
+          <option value="custom">Customise</option>
         </select>
       </div>
     </div>
@@ -309,6 +312,8 @@ const CITY_RANK = {
 };
 // 2nd-priority dispatch hub per city (after the warehouse) — matched by keyword in the store name.
 const CITY_HUB = { Islamabad:"centaurus", Lahore:"galleria", Karachi:"realty" };
+// Made-to-order / customise SKUs (matched case-insensitively). Add more SKUs to this list as needed.
+const CUSTOM_SKUS = new Set(["24-l00000204-10-00000-00000-00000-00000"]);
 const CITY_ALIAS = {
   islamabad:"Islamabad", isb:"Islamabad", isl:"Islamabad", rawalpindi:"Islamabad", rwp:"Islamabad", taxila:"Islamabad",
   wah:"Islamabad", attock:"Islamabad", chakwal:"Islamabad", jhelum:"Islamabad", abbottabad:"Islamabad", "abbott abad":"Islamabad",
@@ -531,19 +536,40 @@ function runAnalysis(){
       if(dc&&idx.byDesign.has(dc)){ const cands=idx.byDesign.get(dc); const merged={sku:sku||cands[0].sku,design:dc,locs:[]};
         cands.forEach(c=>merged.locs.push(...c.locs)); rec=merged; matchType="Design code"; design=dc; } }
     else if(!design){ design=rec.design; }
-    const d=rec?chooseDispatch(rec,orderCity):{status:"oos",source:"—",sourceCity:"—",qty:0,reason:"This SKU was not found in the inventory sheet."};
+    const isCustom = CUSTOM_SKUS.has(sku.toLowerCase());
+    const d = isCustom
+      ? {status:"custom",source:"—",sourceCity:"—",qty:0,reason:"This SKU is a made-to-order / customise item — produced on order, not dispatched from existing stock."}
+      : (rec?chooseDispatch(rec,orderCity):{status:"oos",source:"—",sourceCity:"—",qty:0,reason:"This SKU was not found in the inventory sheet."});
     const locsList=rec?rec.locs.filter(l=>l.qty>0).sort((a,b)=>b.qty-a.qty):[];
-    const where=locsList.length?locsList.map(l=>`${shortStore(l.store)} ${l.qty}`).join(" · "):(rec?"No stock anywhere":"Not in inventory");
+    const tg=tiers(rec,orderCity);
     const hoLoc=rec?rec.locs.find(l=>l.warehouse):null;
     return { order:nm, date:odate, city:orderCity||rawCity||"—", sku, design, product:norm(r[oc.product]),
-      qtyOrdered:oc.qty?numv(r[oc.qty]):"", ful:ful||"—", status:d.status, statusLabel:statusLabel(d.status),
-      source:d.source, sourceCity:d.sourceCity, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType, where:where,
+      qtyOrdered:oc.qty?numv(r[oc.qty]):"", ful:ful||"—", custom:isCustom,
+      status:d.status, statusLabel:statusLabel(d.status), source:d.source, sourceCity:d.sourceCity,
+      p1:tg.p1, p2:tg.p2, p3:tg.p3, p4:tg.p4, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType,
       reason:d.reason, locsList:locsList }; });
   render();
 }
 function statusLabel(s){ return {ho:"Warehouse (Online)", hub:"City Hub", city:"In-City Store",
-  other:"Other City (Transfer)", low:"Low Stock — Verify", oos:"Out of Stock"}[s]||s; }
-function statusClass(s){ return {ho:"s-ho",hub:"s-same",city:"s-city",other:"s-other",low:"s-holow",oos:"s-oos"}[s]||""; }
+  other:"Other City (Transfer)", low:"Low Stock — Verify", oos:"Out of Stock", custom:"Customise Order"}[s]||s; }
+function statusClass(s){ return {ho:"s-ho",hub:"s-same",city:"s-city",other:"s-other",low:"s-holow",oos:"s-oos",custom:"s-custom"}[s]||""; }
+function tiers(rec, orderCity){
+  const blank={p1:"",p2:"",p3:"",p4:""};
+  if(!rec) return blank;
+  const ho = rec.locs.filter(l=>l.warehouse).sort((a,b)=>b.qty-a.qty)[0];
+  const hubKw = CITY_HUB[orderCity];
+  const hub = hubKw ? rec.locs.find(l=>!l.warehouse && kwMatch(low(l.store),hubKw)) : null;
+  const inCity = rec.locs.filter(l=>!l.warehouse && l.city===orderCity && !(hub&&l.store===hub.store) && l.qty>0).sort((a,b)=>b.qty-a.qty)[0];
+  const rank = CITY_RANK[orderCity] || {Lahore:0,Islamabad:1,Karachi:2};
+  const isHub = l => { const kw=CITY_HUB[l.city]; return kw ? kwMatch(low(l.store),kw) : false; };
+  const other = rec.locs.filter(l=>!l.warehouse && l.city!==orderCity && l.qty>0).sort((a,b)=> (rank[a.city]??9)-(rank[b.city]??9) || (isHub(a)?0:1)-(isHub(b)?0:1) || b.qty-a.qty)[0];
+  return {
+    p1: ho ? String(ho.qty) : "",
+    p2: (hub&&hub.qty>0) ? `${shortStore(hub.store)} ${hub.qty}` : "",
+    p3: inCity ? `${shortStore(inCity.store)} ${inCity.qty}` : "",
+    p4: other ? `${shortStore(other.store)} ${other.qty}` : "",
+  };
+}
 function shortStore(s){ const l=low(s);
   if(/warehouse|\(ho\)|head office/.test(l)) return "HO";
   if(l.includes("clifton")) return "Clifton KHI";
@@ -559,17 +585,16 @@ function shortStore(s){ const l=low(s);
 
 /* ============================== RENDER ============================== */
 const COLS=[
-  {k:"order",t:"Order #"},{k:"date",t:"Date"},{k:"city",t:"City"},{k:"sku",t:"SKU"},
+  {k:"type",t:"Type"},{k:"order",t:"Order #"},{k:"date",t:"Date"},{k:"city",t:"City"},{k:"sku",t:"SKU"},
   {k:"product",t:"Product"},{k:"qtyOrdered",t:"Qty",num:true},{k:"ful",t:"Fulfillment"},
-  {k:"statusLabel",t:"Source"},{k:"source",t:"Dispatch From"},{k:"sourceCity",t:"From City"},
-  {k:"ho",t:"HO Qty",num:true},{k:"match",t:"Match"},{k:"where",t:"Stock Locations"},
+  {k:"statusLabel",t:"Dispatch"},{k:"source",t:"Dispatch From"},
+  {k:"p1",t:"1 · Warehouse"},{k:"p2",t:"2 · City Hub"},{k:"p3",t:"3 · In-City"},{k:"p4",t:"4 · Other City"},
 ];
 function cellHtml(r,col){
+  if(col.k==="type") return `<td>${r.custom?'<span class="pill s-custom">Customise</span>':'<span class="mtag">Standard</span>'}</td>`;
   if(col.k==="statusLabel") return `<td><span class="pill ${statusClass(r.status)}">${escHtml(r.statusLabel)}</span></td>`;
-  if(col.k==="where") return `<td class="where"><div class="wcell" title="${escHtml(r.where)}">${escHtml(r.where)}</div></td>`;
-  if(col.k==="match") return `<td><span class="mtag">${escHtml(r.match||"—")}</span></td>`;
   if(col.num) return `<td class="num">${r[col.k]}</td>`;
-  return `<td>${escHtml(r[col.k])}</td>`;
+  return `<td>${escHtml(r[col.k]==null?"":r[col.k])}</td>`;
 }
 let cardFilter="";
 function showDashboard(){ document.getElementById("landing").style.display="none"; document.getElementById("dashboard").style.display="block"; }
@@ -593,7 +618,8 @@ function render(){
     card("purple","city","In-City",c("city"))+
     card("amber","other","Other City",c("other"))+
     card("amber","low","Low Stock",c("low"))+
-    card("red","oos","Out of Stock",c("oos"));
+    card("red","oos","Out of Stock",c("oos"))+
+    card("cust","custom","Customise",c("custom"));
   document.querySelectorAll(".card").forEach(el=> el.onclick=()=>{
     const f=el.dataset.f;
     if(f==="__all"||f==="__units"){ cardFilter=""; document.getElementById("statusFilter").value=""; }
@@ -650,7 +676,7 @@ function applyFilters(){
     if(fulVal){ const f=low(r.ful);
       if(fulVal==="fulfilled"&&f!=="fulfilled") return false;
       if(fulVal==="unfulfilled"&&f==="fulfilled") return false; }
-    if(q){ const blob=low([r.order,r.sku,r.design,r.product,r.source,r.where,r.city].join(" ")); if(!blob.includes(q)) return false; }
+    if(q){ const blob=low([r.order,r.sku,r.design,r.product,r.source,r.p2,r.p3,r.p4,r.city].join(" ")); if(!blob.includes(q)) return false; }
     return true; });
 }
 ["search","statusFilter","cityFilter","dateFrom","dateTo"].forEach(id=> document.getElementById(id).addEventListener("input",()=>{ cardFilter=document.getElementById("statusFilter").value; render(); }));
