@@ -446,6 +446,7 @@ function autoDetect(){
     date:o.date||pickHeader(ordHeaders,["created at","created","order date","date","processed at"]),
     design:o.design||pickHeader(ordHeaders,["design code","design","style","style code"]),
     ful:o.ful||pickHeader(ordHeaders,["lineitem fulfillment status","fulfillment status","fulfilment status"]),
+    cancel:o.cancel||pickHeader(ordHeaders,["cancelled at","canceled at","cancelled","canceled","cancellation"]),
   };
   const storeCols=invHeaders.filter(classifyStoreHeader);
   MAP.inv = {
@@ -510,17 +511,19 @@ function runAnalysis(){
   showErr(""); persist();
   const idx=buildInventoryIndex(); const oc=MAP.ord;
   const addrCols=ordHeaders.filter(h=> /^shipping (address|street|company|zip)/i.test(low(h)));
-  const cityByOrder={},fulByOrder={},provByOrder={},addrByOrder={};
+  const cityByOrder={},fulByOrder={},provByOrder={},addrByOrder={},cancelByOrder={};
   ordRaw.rows.forEach(r=>{ const nm=norm(r[oc.order]); if(!nm) return;
     const c=oc.city?norm(r[oc.city]):""; if(c&&!cityByOrder[nm]) cityByOrder[nm]=c;
     const f=oc.ful?norm(r[oc.ful]):""; if(f&&!fulByOrder[nm]) fulByOrder[nm]=f;
     const p=oc.prov?norm(r[oc.prov]):""; if(p&&!provByOrder[nm]) provByOrder[nm]=p;
+    const cn=oc.cancel?norm(r[oc.cancel]):""; if(cn&&!cancelByOrder[nm]) cancelByOrder[nm]=cn;
     const a=addrCols.map(h=>norm(r[h])).filter(Boolean).join(" "); if(a&&!addrByOrder[nm]) addrByOrder[nm]=a; });
   results = ordRaw.rows.map(r=>{
     const sku=norm(r[oc.sku]), nm=norm(r[oc.order]);
     const rawCity=(oc.city?norm(r[oc.city]):"")||cityByOrder[nm]||"";
     const prov=(oc.prov?norm(r[oc.prov]):"")||provByOrder[nm]||"";
     const addr=addrByOrder[nm]||""; const ful=(oc.ful?norm(r[oc.ful]):"")||fulByOrder[nm]||"";
+    const cancelled=!!((oc.cancel?norm(r[oc.cancel]):"")||cancelByOrder[nm]||"");
     const odate=oc.date?dateKey(r[oc.date]):"";
     const orderCity=normCity(rawCity)||provinceHub(prov)||normCity(addr)||"";
     let rec=sku?idx.bySku.get(sku):null, matchType=rec?"SKU":""; let design=oc.design?norm(r[oc.design]):"";
@@ -537,12 +540,13 @@ function runAnalysis(){
       ? {status:"custom",source:"—",sourceCity:"—",qty:0,reason:"This SKU is a made-to-order / customise item — produced on order, not dispatched from existing stock."}
       : (rec?chooseDispatch(rec,orderCity):{status:"oos",source:"—",sourceCity:"—",qty:0,reason:"This SKU was not found in the inventory sheet."});
     const locsList=rec?rec.locs.filter(l=>l.qty>0).sort((a,b)=>b.qty-a.qty):[];
+    const totalStock=rec?rec.locs.reduce((a,l)=>a+(+l.qty||0),0):"";
     const tg=tiers(rec,orderCity);
     const hoLoc=rec?rec.locs.find(l=>l.warehouse):null;
     return { order:nm, date:odate, city:orderCity||rawCity||"—", sku, design, product:norm(r[oc.product]),
-      qtyOrdered:oc.qty?numv(r[oc.qty]):"", ful:ful||"—", custom:isCustom,
+      qtyOrdered:oc.qty?numv(r[oc.qty]):"", ful:ful||"—", custom:isCustom, cancelled:cancelled,
       status:d.status, statusLabel:statusLabel(d.status), source:d.source, sourceCity:d.sourceCity, low:!!d.low,
-      p1:tg.p1, p2:tg.p2, p3:tg.p3, p4:tg.p4, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType,
+      totalStock:totalStock, p1:tg.p1, p2:tg.p2, p3:tg.p3, p4:tg.p4, ho:hoLoc?hoLoc.qty:(rec?0:"—"), match:matchType,
       reason:d.reason, locsList:locsList }; });
   render();
 }
@@ -581,19 +585,21 @@ function shortStore(s){ const l=low(s);
 
 /* ============================== RENDER ============================== */
 const COLS=[
-  {k:"type",t:"Type"},{k:"order",t:"Order #"},{k:"date",t:"Date"},{k:"city",t:"City"},{k:"sku",t:"SKU"},
+  {k:"type",t:"Type"},{k:"cancel",t:"Cancelled"},{k:"order",t:"Order #"},{k:"date",t:"Date"},{k:"city",t:"City"},{k:"sku",t:"SKU"},
   {k:"product",t:"Product"},{k:"qtyOrdered",t:"Qty",num:true},{k:"ful",t:"Fulfillment"},
   {k:"statusLabel",t:"Dispatch"},{k:"source",t:"Dispatch From"},{k:"flag",t:"Note"},
+  {k:"totalStock",t:"Current Stock",num:true},
   {k:"p1",t:"1 · Warehouse"},{k:"p2",t:"2 · City Hub"},{k:"p3",t:"3 · In-City"},{k:"p4",t:"4 · Other City"},
 ];
 function cellHtml(r,col){
   if(col.k==="type") return `<td>${r.custom?'<span class="pill s-custom">Customise</span>':'<span class="mtag">Standard</span>'}</td>`;
+  if(col.k==="cancel") return `<td>${r.cancelled?'<span class="pill s-oos">Cancelled</span>':''}</td>`;
   if(col.k==="flag") return `<td>${r.low?'<span class="pill s-holow">Low qty</span>':''}</td>`;
   if(col.k==="statusLabel") return `<td><span class="pill ${statusClass(r.status)}">${escHtml(r.statusLabel)}</span></td>`;
   if(col.num) return `<td class="num">${r[col.k]}</td>`;
   return `<td>${escHtml(r[col.k]==null?"":r[col.k])}</td>`;
 }
-let cardFilter="", lowOnly=false;
+let cardFilter="", lowOnly=false, cancelOnly=false;
 function showDashboard(){ document.getElementById("landing").style.display="none"; document.getElementById("dashboard").style.display="block"; }
 function render(){
   document.getElementById("subInfo").textContent="· "+results.length+" order lines · "+new Date().toLocaleDateString();
@@ -606,7 +612,8 @@ function render(){
   const c=k=>view.filter(r=>r.status===k).length;
   const unful=view.filter(r=>low(r.ful)!=="fulfilled"&&r.ful!=="—").length;
   const lowCount=view.filter(r=>r.low).length;
-  const card=(cls,key,lbl,val)=>`<div class="card ${cls} ${(cardFilter===key)||(key==='__low'&&lowOnly)?'active':''}" data-f="${key}"><span class="dot"></span><div class="k">${lbl}</div><div class="v">${val}</div></div>`;
+  const cancelCount=view.filter(r=>r.cancelled).length;
+  const card=(cls,key,lbl,val)=>`<div class="card ${cls} ${(cardFilter===key)||(key==='__low'&&lowOnly)||(key==='__cancel'&&cancelOnly)?'active':''}" data-f="${key}"><span class="dot"></span><div class="k">${lbl}</div><div class="v">${val}</div></div>`;
   document.getElementById("cards").innerHTML=
     card("","__all","Order Lines",tot)+
     card("info","__units","Units",units)+
@@ -617,12 +624,14 @@ function render(){
     card("amber","other","Other City",c("other"))+
     card("red","oos","Out of Stock",c("oos"))+
     card("cust","custom","Customise",c("custom"))+
-    card("amber","__low","Low Qty",lowCount);
+    card("amber","__low","Low Qty",lowCount)+
+    card("red","__cancel","Cancelled",cancelCount);
   document.querySelectorAll(".card").forEach(el=> el.onclick=()=>{
     const f=el.dataset.f;
-    if(f==="__all"||f==="__units"){ cardFilter=""; lowOnly=false; document.getElementById("statusFilter").value=""; }
+    if(f==="__all"||f==="__units"){ cardFilter=""; lowOnly=false; cancelOnly=false; document.getElementById("statusFilter").value=""; }
     else if(f==="__unful"){ cardFilter=""; setSeg("unfulfilled"); }
     else if(f==="__low"){ lowOnly=!lowOnly; }
+    else if(f==="__cancel"){ cancelOnly=!cancelOnly; }
     else { cardFilter=f; document.getElementById("statusFilter").value=f; }
     render();
   });
@@ -672,6 +681,7 @@ function applyFilters(){
     if(to&&(!r.date||r.date>to)) return false;
     if(sf&&r.status!==sf) return false;
     if(lowOnly&&!r.low) return false;
+    if(cancelOnly&&!r.cancelled) return false;
     if(cityF&&r.city!==cityF) return false;
     if(fulVal){ const f=low(r.ful);
       if(fulVal==="fulfilled"&&f!=="fulfilled") return false;
@@ -686,6 +696,7 @@ document.querySelectorAll("#fulSeg button").forEach(b=> b.onclick=()=> setSeg(b.
 /* ============================== EXPORT ============================== */
 function exportVal(r,col){
   if(col.k==="type") return r.custom?"Customise":"Standard";
+  if(col.k==="cancel") return r.cancelled?"Cancelled":"";
   if(col.k==="flag") return r.low?"Low qty":"";
   if(col.k==="statusLabel") return r.statusLabel;
   return r[col.k]==null?"":r[col.k];
@@ -716,7 +727,7 @@ function buildDrawer(){
     selField("Product","d_product",ordHeaders,o.product)+selField("Quantity","d_qty",ordHeaders,o.qty)+
     selField("Delivery city","d_city",ordHeaders,o.city)+selField("Province (fallback)","d_prov",ordHeaders,o.prov)+
     selField("Order date","d_date",ordHeaders,o.date)+selField("Design code (optional)","d_design",ordHeaders,o.design)+
-    selField("Fulfillment (optional)","d_ful",ordHeaders,o.ful);
+    selField("Fulfillment (optional)","d_ful",ordHeaders,o.ful)+selField("Cancelled at (optional)","d_cancel",ordHeaders,o.cancel);
   document.getElementById("invLayout").value=MAP.inv.layout;
   renderInvMap(); renderStoreMap();
   document.getElementById("hoMin").value=MAP.hoMin;
@@ -747,7 +758,7 @@ document.getElementById("overlay2").onclick=closeModal;
 document.getElementById("drawerApply").onclick=()=>{
   const v=id=>{ const el=document.getElementById(id); return el?el.value:""; };
   MAP.ord={ order:v("d_order"),sku:v("d_sku"),product:v("d_product"),qty:v("d_qty"),city:v("d_city"),
-            prov:v("d_prov"),date:v("d_date"),design:v("d_design"),ful:v("d_ful") };
+            prov:v("d_prov"),date:v("d_date"),design:v("d_design"),ful:v("d_ful"),cancel:v("d_cancel") };
   MAP.inv={ layout:v("invLayout"),sku:v("d_i_sku"),design:v("d_i_design"),store:v("d_i_store"),qty:v("d_i_qty") };
   MAP.hoMin=numv(document.getElementById("hoMin").value);
   if(!MAP.ord.sku){ showErr("Pick the SKU column."); return; }
